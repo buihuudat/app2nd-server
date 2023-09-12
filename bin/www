@@ -1,0 +1,155 @@
+#!/usr/bin/env node
+require("dotenv").config();
+/**
+ * Module dependencies.
+ */
+
+const app = require("../app");
+const debug = require("debug")("server:server");
+const http = require("http");
+const socket = require("socket.io");
+
+/**
+ * Get port from environment and store in Express.
+ */
+
+const port = normalizePort(process.env.PORT || "5000");
+app.set("port", port);
+
+/**
+ * Create HTTP server.
+ */
+
+const server = http.createServer(app);
+const mongoose = require("mongoose");
+
+/**
+ * Listen on provided port, on all network interfaces.
+ */
+
+mongoose.set("strictQuery", false);
+mongoose
+  .connect(process.env.URL_DB, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => {
+    console.log("DB Connetion Successfull");
+  })
+  .catch((err) => {
+    console.log(err.message);
+  });
+
+const sv = server.listen(port, () => {
+  console.log(`Server started on ${process.env.PORT}`);
+});
+server.on("error", onError);
+server.on("listening", onListening);
+
+const hostClient = "http://192.168.1.8:19000";
+const hostAdmin = "http://localhost:3000";
+const onlineUsers = new Map();
+
+const handleDisconnect = (userId) => {
+  onlineUsers.delete(userId);
+  console.log(`User ${userId} disconnected`);
+};
+
+const handleConnection = (socket) => {
+  console.log("Connected socket");
+  socket.on("user", (userId) => {
+    onlineUsers.set(userId, socket.id);
+    console.log(`User ${userId} connected`);
+  });
+
+  socket.on("send-msg", (data) => {
+    const sendUserSocket = onlineUsers.get(data.to);
+    if (sendUserSocket && socket.id !== sendUserSocket) {
+      socket.to(sendUserSocket).emit("msg-recieve", data);
+      console.log(data);
+    }
+  });
+
+  socket.on("send-post", (data) => {
+    const sendUserSocket = onlineUsers.get(data);
+    console.log(data, sendUserSocket, socket.id);
+    if (sendUserSocket && socket.id !== sendUserSocket) {
+      socket.to(sendUserSocket).emit("post-recieve", data);
+      console.log(123);
+    }
+  });
+
+  socket.on("disconnect", () => {
+    for (const [userId, socketId] of onlineUsers.entries()) {
+      if (socketId === socket.id) {
+        handleDisconnect(userId);
+        break;
+      }
+    }
+  });
+};
+
+const io = socket(sv, {
+  cors: {
+    origin: [hostAdmin, hostClient],
+    credentials: true,
+  },
+});
+
+io.on("connection", handleConnection);
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+
+function normalizePort(val) {
+  const port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+
+function onError(error) {
+  if (error.syscall !== "listen") {
+    throw error;
+  }
+
+  const bind = typeof port === "string" ? "Pipe " + port : "Port " + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case "EACCES":
+      console.error(bind + " requires elevated privileges");
+      process.exit(1);
+      break;
+    case "EADDRINUSE":
+      console.error(bind + " is already in use");
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  const addr = server.address();
+  const bind = typeof addr === "string" ? "pipe " + addr : "port " + addr.port;
+  debug("Listening on " + bind);
+}
